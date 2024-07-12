@@ -7,6 +7,10 @@ exp/
 # C extensions
 *.so
 BundleTrack/build
+storeframes
+views
+weights
+demo_data
 # Distribution / packaging
 .Python
 foundationpose/
