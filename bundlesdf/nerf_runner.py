@@ -1112,8 +1112,16 @@ class NerfRunner:
 
     mesh = trimesh.Trimesh(vertices, triangles, process=False)
 
+    # Only get the largest connected component from the mesh so that the outliers are removed.
+    try:
+      connected_components = mesh.split(only_watertight=False)
+      largest_cc = max(connected_components, key=lambda m: m.vertices.shape[0])
+    except TypeError as e:
+        print(f"TypeError encountered: {e}")
+        exit(1)
+
     if return_sigma:
-      return mesh,sigma,query_pts
+        return mesh, sigma, query_pts
 
     return mesh
 
@@ -1224,6 +1232,7 @@ class NerfRunner:
 
     tex_image = tex_image/weight_tex_image[...,None]
     tex_image = tex_image.data.cpu().numpy()
+    tex_image = np.nan_to_num(tex_image, nan=0.0, posinf=255.0, neginf=0.0)
     tex_image = np.clip(tex_image,0,255).astype(np.uint8)
     tex_image = tex_image[::-1].copy()
     new_texture = texture_map_interpolation(tex_image)

@@ -23,12 +23,74 @@ from datareader import *
 
 
 @torch.inference_mode()
-def make_crop_data_batch(render_size, ob_in_cams, mesh, rgb, depth, K, crop_ratio, xyz_map, normal_map=None, mesh_diameter=None, cfg=None, glctx=None, mesh_tensors=None, dataset:PoseRefinePairH5Dataset=None):
+def make_crop_data_batch(render_size, ob_in_cams, mesh, rgb, 
+                         depth, K, crop_ratio, xyz_map, normal_map=None, 
+                         mesh_diameter=None, cfg=None, glctx=None, mesh_tensors=None, 
+                         dataset:PoseRefinePairH5Dataset=None, mask=None, custom_crops=False):
+  '''Function responsible for providing the cropped images of the current frame and the
+  previous frame to be used by the `predict()` function in the code. For explanation purposes,
+  when this switches to the tracking mode, rgbA and rgbB are the images used in the encoder-decoder
+  module where the pose estimates of rgbA are refined to match rgbB. rgbB is a rendering of the NeRF
+  using the previous pose estimate and rgbB is cropping of the image using perspective transformation
+  using the previous pose estimate and some other parameters from the NeRF model for better accuracy. This
+  is why the NeRF model must be in the correct dimensions.
+  '''
+
+  def generate_pose_with_mask_input(K, rgb, depth, mask, ob_in_cams, scene_pts=None):
+      '''
+      @scene_pts: torch tensor (N,3)
+      '''
+      if torch.is_tensor(depth):
+        depth = depth.cpu().numpy()
+      if torch.is_tensor(mask):
+        mask = mask.cpu().numpy()
+      # same rotation, different translation
+      center = guess_translation(depth=depth, mask=mask, K=K)
+      ob_in_cams[:,:3,3] = torch.tensor(center, device='cuda', dtype=torch.float).reshape(1,3)
+      return ob_in_cams
+    
+  def guess_translation(depth, mask, K):
+      vs, us = np.where(mask > 0)
+      if len(us) == 0:
+          logging.info(f'mask is all zero')
+          return np.zeros((3))
+      
+      uc = (us.min() + us.max()) / 2.0
+      vc = (vs.min() + vs.max()) / 2.0
+      
+      valid = (mask > 0) & (depth >= 0.1)
+      if not valid.any():
+          logging.info(f"valid is empty")
+          return np.zeros((3))
+
+      zc = np.median(depth[valid])
+      center = (np.linalg.inv(K) @ np.asarray([uc,vc,1]).reshape(3,1)) * zc
+
+      return center.reshape(3)
+
+  if custom_crops:
+    ob_in_cams = generate_pose_with_mask_input(K=K, rgb=rgb, depth=depth, mask=mask, ob_in_cams=ob_in_cams)
+
   logging.info("Welcome make_crop_data_batch")
   H,W = depth.shape[:2]
   args = []
   method = 'box_3d'
-  tf_to_crops = compute_crop_window_tf_batch(pts=mesh.vertices, H=H, W=W, poses=ob_in_cams, K=K, crop_ratio=crop_ratio, out_size=(render_size[1], render_size[0]), method=method, mesh_diameter=mesh_diameter)
+  # for warping, can use the translation computed using the centroid of segmentation mask + depth map
+  # and orientation from previous pose as the pose estimate. Actually, this is being done in the first frame
+  # for rgbB. Check that out. Use the `generate_random_pose_hypo()` for this purpose but we use the rotation
+  # from previous ob_in_cam pose.
+
+  # tf_to_crops is the Bx3x3 transformation matrix to transform the points from the 
+  # original input rgb image to the cropped rgb image to be passed through the encoder-decoder
+  # module. Here, batch size is 1 since the 'poses' variable passed in is just the last pose
+  # and not a set of last poses. This could be changed if we want to use multiple previous
+  # poses to make the current prediction. 
+  # tf_to_crops.shape = (1, 3, 3)
+  tf_to_crops = compute_crop_window_tf_batch(pts=mesh.vertices, H=H, W=W, 
+                                             poses=ob_in_cams, K=K, crop_ratio=crop_ratio, 
+                                             out_size=(render_size[1], render_size[0]), 
+                                             method=method, mesh_diameter=mesh_diameter)
+
 
   logging.info("make tf_to_crops done")
 
@@ -46,7 +108,12 @@ def make_crop_data_batch(render_size, ob_in_cams, mesh, rgb, depth, K, crop_rati
 
   for b in range(0,len(poseA),bs):
     extra = {}
-    rgb_r, depth_r, normal_r = nvdiffrast_render(K=K, H=H, W=W, ob_in_cams=poseA[b:b+bs], context='cuda', get_normal=cfg['use_normal'], glctx=glctx, mesh_tensors=mesh_tensors, output_size=cfg['input_resize'], bbox2d=bbox2d_ori[b:b+bs], use_light=True, extra=extra)
+    rgb_r, depth_r, normal_r = nvdiffrast_render(K=K, H=H, W=W, ob_in_cams=poseA[b:b+bs], 
+                                                 context='cuda', get_normal=cfg['use_normal'], 
+                                                 glctx=glctx, mesh_tensors=mesh_tensors, 
+                                                 output_size=cfg['input_resize'], 
+                                                 bbox2d=bbox2d_ori[b:b+bs], 
+                                                 use_light=True, extra=extra)
     rgb_rs.append(rgb_r)
     depth_rs.append(depth_r[...,None])
     normal_rs.append(normal_r)
@@ -60,11 +127,33 @@ def make_crop_data_batch(render_size, ob_in_cams, mesh, rgb, depth, K, crop_rati
 
   logging.info("render done")
 
-  rgbBs = kornia.geometry.transform.warp_perspective(torch.as_tensor(rgb, dtype=torch.float, device='cuda').permute(2,0,1)[None].expand(B,-1,-1,-1), tf_to_crops, dsize=render_size, mode='bilinear', align_corners=False)
+  rgb_tensor = torch.as_tensor(rgb, dtype=torch.float, device='cuda')
+  rgb_permuted = rgb_tensor.permute(2, 0, 1)[None]
+  rgb_expanded = rgb_permuted.expand(B, -1, -1, -1)
+
+  # must modify rgbB to use the transformation matrix from the segmentation mask instead
+  # render_resize: h: 160 w: 160
+  # must calculate the transformation matrix using segmentation rather than the previous poses.
+  rgbBs = kornia.geometry.transform.warp_perspective(
+      rgb_expanded, 
+      tf_to_crops, 
+      dsize=render_size, 
+      mode='bilinear', 
+      align_corners=False
+  )
+
   if rgb_rs.shape[-2:]!=cfg['input_resize']:
-    rgbAs = kornia.geometry.transform.warp_perspective(rgb_rs, tf_to_crops, dsize=render_size, mode='bilinear', align_corners=False)
+    rgbAs = kornia.geometry.transform.warp_perspective(
+        rgb_rs, 
+        tf_to_crops, 
+        dsize=render_size, 
+        mode='bilinear', 
+        align_corners=False
+    )
   else:
     rgbAs = rgb_rs
+
+
   if xyz_map_rs.shape[-2:]!=cfg['input_resize']:
     xyz_mapAs = kornia.geometry.transform.warp_perspective(xyz_map_rs, tf_to_crops, dsize=render_size, mode='nearest', align_corners=False)
   else:
@@ -147,7 +236,8 @@ class PoseRefinePredictor:
 
 
   @torch.inference_mode()
-  def predict(self, rgb, depth, K, ob_in_cams, xyz_map, normal_map=None, get_vis=False, mesh=None, mesh_tensors=None, glctx=None, mesh_diameter=None, iteration=5):
+  def predict(self, rgb, depth, K, ob_in_cams, xyz_map, normal_map=None, get_vis=False, mesh=None, 
+              mesh_tensors=None, glctx=None, mesh_diameter=None, mask=None, iteration=5, custom_crops=True):
     '''
     @rgb: np array (H,W,3)
     @ob_in_cams: np array (N,4,4)
@@ -161,6 +251,7 @@ class PoseRefinePredictor:
     logging.info(f'self.cfg.use_normal:{self.cfg.use_normal}')
     if not self.cfg.use_normal:
       normal_map = None
+    # self.cfg.use_mask -> to use the XMem masks
 
     crop_ratio = self.cfg['crop_ratio']
     logging.info(f"trans_normalizer:{self.cfg['trans_normalizer']}, rot_normalizer:{self.cfg['rot_normalizer']}")
@@ -174,14 +265,21 @@ class PoseRefinePredictor:
 
     rgb_tensor = torch.as_tensor(rgb, device='cuda', dtype=torch.float)
     depth_tensor = torch.as_tensor(depth, device='cuda', dtype=torch.float)
+    # depth_tensor = depth
     xyz_map_tensor = torch.as_tensor(xyz_map, device='cuda', dtype=torch.float)
+    mask = mask if custom_crops else None
     trans_normalizer = self.cfg['trans_normalizer']
     if not isinstance(trans_normalizer, float):
       trans_normalizer = torch.as_tensor(list(trans_normalizer), device='cuda', dtype=torch.float).reshape(1,3)
 
     for _ in range(iteration):
       logging.info("making cropped data")
-      pose_data = make_crop_data_batch(self.cfg.input_resize, B_in_cams, mesh_centered, rgb_tensor, depth_tensor, K, crop_ratio=crop_ratio, normal_map=normal_map, xyz_map=xyz_map_tensor, cfg=self.cfg, glctx=glctx, mesh_tensors=mesh_tensors, dataset=self.dataset, mesh_diameter=mesh_diameter)
+      # cfg.input_resize: h: 160 w: 160
+      pose_data = make_crop_data_batch(self.cfg.input_resize, B_in_cams, mesh_centered, 
+                                       rgb_tensor, depth_tensor, K, crop_ratio=crop_ratio, 
+                                       normal_map=normal_map, xyz_map=xyz_map_tensor, cfg=self.cfg, 
+                                       glctx=glctx, mesh_tensors=mesh_tensors, dataset=self.dataset, 
+                                       mesh_diameter=mesh_diameter, mask=mask, custom_crops=custom_crops)
       B_in_cams = []
       for b in range(0, pose_data.rgbAs.shape[0], bs):
         A = torch.cat([pose_data.rgbAs[b:b+bs].cuda(), pose_data.xyz_mapAs[b:b+bs].cuda()], dim=1).float()
@@ -242,7 +340,12 @@ class PoseRefinePredictor:
       logging.info("get_vis...")
       canvas = []
       padding = 2
-      pose_data = make_crop_data_batch(self.cfg.input_resize, torch.as_tensor(ob_centered_in_cams), mesh_centered, rgb, depth, K, crop_ratio=crop_ratio, normal_map=normal_map, xyz_map=xyz_map_tensor, cfg=self.cfg, glctx=glctx, mesh_tensors=mesh_tensors, dataset=self.dataset, mesh_diameter=mesh_diameter)
+      pose_data = make_crop_data_batch(self.cfg.input_resize, torch.as_tensor(ob_centered_in_cams), 
+                                       mesh_centered, rgb, depth, K, crop_ratio=crop_ratio, 
+                                       normal_map=normal_map, xyz_map=xyz_map_tensor, 
+                                       cfg=self.cfg, glctx=glctx, mesh_tensors=mesh_tensors, 
+                                       dataset=self.dataset, mesh_diameter=mesh_diameter, 
+                                       mask=mask, custom_crops=custom_crops)
       for id in range(0, len(B_in_cams)):
         rgbA_vis = (pose_data.rgbAs[id]*255).permute(1,2,0).data.cpu().numpy()
         rgbB_vis = (pose_data.rgbBs[id]*255).permute(1,2,0).data.cpu().numpy()
@@ -266,7 +369,12 @@ class PoseRefinePredictor:
         canvas.append(row)
       canvas = make_grid_image(canvas, nrow=1, padding=padding, pad_value=255)
 
-      pose_data = make_crop_data_batch(self.cfg.input_resize, B_in_cams, mesh_centered, rgb, depth, K, crop_ratio=crop_ratio, normal_map=normal_map, xyz_map=xyz_map_tensor, cfg=self.cfg, glctx=glctx, mesh_tensors=mesh_tensors, dataset=self.dataset, mesh_diameter=mesh_diameter)
+      pose_data = make_crop_data_batch(self.cfg.input_resize, B_in_cams, mesh_centered, 
+                                       rgb, depth, K, crop_ratio=crop_ratio, normal_map=normal_map, 
+                                       xyz_map=xyz_map_tensor, cfg=self.cfg, glctx=glctx, 
+                                       mesh_tensors=mesh_tensors, dataset=self.dataset, 
+                                       mesh_diameter=mesh_diameter, mask=mask,
+                                       custom_crops=custom_crops)
       canvas_refined = []
       for id in range(0, len(B_in_cams)):
         rgbA_vis = (pose_data.rgbAs[id]*255).permute(1,2,0).data.cpu().numpy()

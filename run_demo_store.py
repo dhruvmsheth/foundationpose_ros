@@ -53,7 +53,8 @@ if __name__=='__main__':
                 pcd = toOpen3dCloud(xyz_map[valid], color[valid])
                 o3d.io.write_point_cloud(f'{debug_dir}/scene_complete.ply', pcd)
         else:
-            pose = est.track_one(rgb=color, depth=depth, K=reader.K, iteration=args.track_refine_iter)
+            mask = reader.get_mask(i).astype(bool)
+            pose = est.track_one(rgb=color, depth=depth, mask=mask, K=reader.K, iteration=args.track_refine_iter)
         os.makedirs(f'{debug_dir}/ob_in_cam', exist_ok=True)
         np.savetxt(f'{debug_dir}/ob_in_cam/{reader.id_strs[i]}.txt', pose.reshape(4,4))
         if debug>=1:

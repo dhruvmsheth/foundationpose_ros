@@ -21,6 +21,7 @@ def run_neural_object_field(cfg, K, rgbs, depths, masks, cam_in_obs, debug=0, sa
   masks = np.asarray(masks)
   cam_in_obs = np.asarray(cam_in_obs)
   glcam_in_obs = cam_in_obs@glcam_in_cvcam
+  # glcam_in_obs = cam_in_obs
 
   cfg['save_dir'] = save_dir
   os.makedirs(save_dir, exist_ok=True)
@@ -49,8 +50,8 @@ def run_neural_object_field(cfg, K, rgbs, depths, masks, cam_in_obs, debug=0, sa
 def run_one_ob(base_dir, cfg, use_refined_mask=False):
   save_dir = f'{base_dir}/nerf'
   os.system(f'rm -rf {save_dir} && mkdir -p {save_dir}')
-  with open(f'{base_dir}/select_frames.yml','r') as ff:
-    info = yaml.safe_load(ff)
+  # with open(f'{base_dir}/select_frames.yml','r') as ff:
+  #   info = yaml.safe_load(ff)
   rgbs = []
   depths = []
   masks = []
@@ -59,20 +60,39 @@ def run_one_ob(base_dir, cfg, use_refined_mask=False):
   K = np.loadtxt(f'{base_dir}/K.txt')
   for i,color_file in enumerate(color_files):
     rgb = imageio.imread(color_file)
-    depth = cv2.imread(color_file.replace('rgb','depth_enhanced'), -1)/1e3
+    # depth = cv2.imread(color_file.replace('rgb','depth'), -1)/1e3
+    depth = cv2.imread(color_file.replace('rgb','depth'), -1).astype(float) / 1000
     if use_refined_mask:
       mask = cv2.imread(color_file.replace('rgb','mask_refined'), -1)
     else:
       mask = cv2.imread(color_file.replace('rgb','mask'), -1)
+    if mask.ndim == 3:
+        mask = cv2.cvtColor(mask, cv2.COLOR_BGR2GRAY)
     cam_in_ob = np.loadtxt(color_file.replace('rgb','cam_in_ob').replace('.png','.txt')).reshape(4,4)
     rgbs.append(rgb)
     depths.append(depth)
     masks.append(mask)
     cam_in_obs.append(cam_in_ob)
 
+    # Print shapes for debugging
+    print(f"RGB shape: {rgb.shape}")
+    print(f"Depth shape: {np.max(depth)}, {depth.shape}")
+    print(f"Mask shape: {mask.shape}")
+
   mesh = run_neural_object_field(cfg, K, rgbs, depths, masks, cam_in_obs, save_dir=save_dir, debug=0)
   return mesh
 
+def run_custom():
+  code_dir = os.path.dirname(os.path.realpath(__file__))
+  with open(f'{code_dir}/config_custom.yml','r') as ff:
+    cfg = yaml.safe_load(ff)
+
+  base_dir = f'{args.ref_view_dir}'
+  out_file = f'{base_dir}/model/model.obj'
+  print(f'mesh will be saved to {out_file}')
+  mesh = run_one_ob(base_dir=base_dir, cfg=cfg)
+  os.makedirs(os.path.dirname(out_file), exist_ok=True)
+  mesh.export(out_file)
 
 def run_ycbv():
   ob_ids = np.arange(1,22)
@@ -106,10 +126,12 @@ if __name__=="__main__":
   parser = argparse.ArgumentParser()
   code_dir = os.path.dirname(os.path.realpath(__file__))
   parser.add_argument('--ref_view_dir', type=str, default=f'/mnt/9a72c439-d0a7-45e8-8d20-d7a235d02763/DATASET/YCB_Video/bowen_addon/ref_views_16')
-  parser.add_argument('--dataset', type=str, default=f'ycbv', help='one of [ycbv/linemod]')
+  parser.add_argument('--dataset', type=str, default=f'ycbv', help='one of [ycbv/linemod/custom]')
   args = parser.parse_args()
 
   if args.dataset=='ycbv':
     run_ycbv()
-  else:
+  elif args.dataset=='linemod':
     run_linemod()
+  elif args.dataset=='custom':
+    run_custom()

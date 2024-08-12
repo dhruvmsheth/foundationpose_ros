@@ -8,6 +8,8 @@ exp/
 *.so
 BundleTrack/build
 storeframes
+output_frames
+notebooks
 views
 weights
 demo_data

@@ -129,10 +129,11 @@ class FoundationPose:
     @scene_pts: torch tensor (N,3)
     '''
     ob_in_cams = self.rot_grid.clone()
+    # same rotation, different translation
     center = self.guess_translation(depth=depth, mask=mask, K=K)
     ob_in_cams[:,:3,3] = torch.tensor(center, device='cuda', dtype=torch.float).reshape(1,3)
     return ob_in_cams
-
+  
 
   def guess_translation(self, depth, mask, K):
     vs,us = np.where(mask>0)
@@ -200,7 +201,8 @@ class FoundationPose:
     self.ob_id = ob_id
     self.ob_mask = ob_mask
 
-    poses = self.generate_random_pose_hypo(K=K, rgb=rgb, depth=depth, mask=ob_mask, scene_pts=None)
+    poses = self.generate_random_pose_hypo(K=K, rgb=rgb, depth=depth, 
+                                           mask=ob_mask, scene_pts=None)
     poses = poses.data.cpu().numpy()
     logging.info(f'poses:{poses.shape}')
     center = self.guess_translation(depth=depth, mask=ob_mask, K=K)
@@ -212,7 +214,12 @@ class FoundationPose:
     logging.info(f"after viewpoint, add_errs min:{add_errs.min()}")
 
     xyz_map = depth2xyzmap(depth, K)
-    poses, vis = self.refiner.predict(mesh=self.mesh, mesh_tensors=self.mesh_tensors, rgb=rgb, depth=depth, K=K, ob_in_cams=poses.data.cpu().numpy(), normal_map=normal_map, xyz_map=xyz_map, glctx=self.glctx, mesh_diameter=self.diameter, iteration=iteration, get_vis=self.debug>=2)
+    poses, vis = self.refiner.predict(mesh=self.mesh, mesh_tensors=self.mesh_tensors, 
+                                      rgb=rgb, depth=depth, K=K, 
+                                      ob_in_cams=poses.data.cpu().numpy(), 
+                                      normal_map=normal_map, xyz_map=xyz_map, 
+                                      glctx=self.glctx, mesh_diameter=self.diameter, 
+                                      iteration=iteration, get_vis=self.debug>=2, custom_crops=False)
     if vis is not None:
       imageio.imwrite(f'{self.debug_dir}/vis_refiner.png', vis)
 
@@ -235,7 +242,15 @@ class FoundationPose:
     self.best_id = ids[0]
 
     self.poses = poses
+    logging.info(f'######################################')    
+    logging.info(f'######################################')    
+    logging.info(f'######################################')    
+    logging.info(f'######################################')    
+    logging.info(f'######################################')    
+
+    logging.info(f'number of poses are {len(self.poses)}')
     self.scores = scores
+    logging.info(f'number of scores are {len(self.scores)}')
 
     return best_pose.data.cpu().numpy()
 
@@ -247,7 +262,7 @@ class FoundationPose:
     return -torch.ones(len(poses), device='cuda', dtype=torch.float)
 
 
-  def track_one(self, rgb, depth, K, iteration, extra={}):
+  def track_one(self, rgb, depth, K, iteration, extra={}, mask=None):
     if self.pose_last is None:
       logging.info("Please init pose by register first")
       raise RuntimeError
@@ -258,9 +273,13 @@ class FoundationPose:
     depth = bilateral_filter_depth(depth, radius=2, device='cuda')
     logging.info("depth processing done")
 
-    xyz_map = depth2xyzmap_batch(depth[None], torch.as_tensor(K, dtype=torch.float, device='cuda')[None], zfar=np.inf)[0]
-
-    pose, vis = self.refiner.predict(mesh=self.mesh, mesh_tensors=self.mesh_tensors, rgb=rgb, depth=depth, K=K, ob_in_cams=self.pose_last.reshape(1,4,4).data.cpu().numpy(), normal_map=None, xyz_map=xyz_map, mesh_diameter=self.diameter, glctx=self.glctx, iteration=iteration, get_vis=self.debug>=2)
+    xyz_map = depth2xyzmap_batch(depth[None], torch.as_tensor(K, dtype=torch.float, 
+                                                              device='cuda')[None], zfar=np.inf)[0]
+    custom_crops = np.sum(mask) > 10 # use mask only if greater than 10 pixels detected
+    pose, vis = self.refiner.predict(mesh=self.mesh, mesh_tensors=self.mesh_tensors, rgb=rgb, 
+                                     depth=depth, K=K, ob_in_cams=self.pose_last.reshape(1,4,4).data.cpu().numpy(), 
+                                     normal_map=None, mask=mask, xyz_map=xyz_map, mesh_diameter=self.diameter, glctx=self.glctx, 
+                                     iteration=iteration, get_vis=self.debug>=2, custom_crops=custom_crops)
     logging.info("pose done")
     if self.debug>=2:
       extra['vis'] = vis

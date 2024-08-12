@@ -36,6 +36,7 @@ class ModelRendererOffscreen:
     '''
     @window_sizes: H,W
     '''
+    os.environ['PYOPENGL_PLATFORM'] = 'egl'
     self.K = cam_K
     self.scene = pyrender.Scene(ambient_light=[1., 1., 1.],bg_color=[0,0,0])
     self.camera = pyrender.IntrinsicsCamera(fx=cam_K[0,0],fy=cam_K[1,1],cx=cam_K[0,2],cy=cam_K[1,2],znear=0.1,zfar=zfar)

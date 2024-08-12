@@ -130,7 +130,11 @@ def make_mesh_tensors(mesh, device='cuda', max_tex_size=None):
   return mesh_tensors
 
 
-def nvdiffrast_render(K=None, H=None, W=None, ob_in_cams=None, glctx=None, context='cuda', get_normal=False, mesh_tensors=None, mesh=None, projection_mat=None, bbox2d=None, output_size=None, use_light=False, light_color=None, light_dir=np.array([0,0,1]), light_pos=np.array([0,0,0]), w_ambient=0.8, w_diffuse=0.5, extra={}):
+def nvdiffrast_render(K=None, H=None, W=None, ob_in_cams=None, glctx=None, 
+                      context='cuda', get_normal=False, mesh_tensors=None, 
+                      mesh=None, projection_mat=None, bbox2d=None, output_size=None, 
+                      use_light=False, light_color=None, light_dir=np.array([0,0,1]), 
+                      light_pos=np.array([0,0,0]), w_ambient=0.8, w_diffuse=0.5, extra={}):
   '''Just plain rendering, not support any gradient
   @K: (3,3) np array
   @ob_in_cams: (N,4,4) torch tensor, openCV camera
@@ -574,7 +578,9 @@ def compute_mesh_diameter(model_pts=None, mesh=None, n_sample=1000):
   return diameter
 
 
-def compute_crop_window_tf_batch(pts=None, H=None, W=None, poses=None, K=None, crop_ratio=1.2, out_size=None, rgb=None, uvs=None, method='min_box', mesh_diameter=None):
+def compute_crop_window_tf_batch(pts=None, H=None, W=None, poses=None, 
+                                 K=None, crop_ratio=1.2, out_size=None, rgb=None, uvs=None, 
+                                 method='min_box', mesh_diameter=None):
   '''Project the points and find the cropping transform
   @pts: (N,3)
   @poses: (B,4,4) tensor
@@ -973,7 +979,7 @@ class OctreeManager:
 
     ray_index, rays_pid, depth_in_out = kaolin.render.spc.unbatched_raytrace(self.octree,self.vox_point_all_levels,self.pyramids[0],self.exsum,rays_o,rays_d,level=level,return_depth=True,with_exit=True)
     if ray_index.size()[0] == 0:
-      pdb.set_trace()
+      # pdb.set_trace()
       print("[WARNING] batch has 0 intersections!!")
       ray_depths_in_out = torch.zeros((rays_o.shape[0],1,2))
       rays_pid = -torch.ones_like(rays_o[:, :1])
