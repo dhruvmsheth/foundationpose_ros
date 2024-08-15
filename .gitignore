@@ -7,12 +7,20 @@ exp/
 # C extensions
 *.so
 BundleTrack/build
-storeframes
+storeframes/
 output_frames
 notebooks
 views
 weights
-demo_data
+demo_data/cam_in_ob
+demo_data/kinect_driller_seq.zip  
+demo_data/mustard0.zip  
+demo_data/outputs_exp1  
+demo_data/outputs_lowres_cont_2
+demo_data/kinect_driller_seq  
+demo_data/mustard0                
+demo_data/outputs       
+demo_data/outputs_exp2 
 # Distribution / packaging
 .Python
 foundationpose/
