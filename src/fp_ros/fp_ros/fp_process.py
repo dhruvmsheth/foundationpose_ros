@@ -30,7 +30,6 @@ class PoseEstimator(Node):
         self.declare_parameter('est_refine_iter', 5)
         self.declare_parameter('track_refine_iter', 2)
         self.declare_parameter('debug', 1)
-
         self.mesh_file = self.get_parameter('mesh_file').value
         self.debug_dir = self.get_parameter('debug_dir').value
         self.output_dir = self.get_parameter('output_dir').value
@@ -39,26 +38,20 @@ class PoseEstimator(Node):
         self.debug = self.get_parameter('debug').value
 
         self.cv_bridge = CvBridge()
-        self.msg_queue = Queue(maxsize=100)  # Adjust queue size as needed
+        self.msg_queue = Queue(maxsize=100)
 
-        # ROS2 Subscriber
         self.subscription = self.create_subscription(
             SyncedPairs,
             'cam1/synced_pairs',
             self.callback,
             QoSProfile(depth=10))
 
-        # Initialize pose estimation
         self.initialize_pose_estimation()
-
-        # Start processing timer
-        self.create_timer(0.01, self.process_queue)  # Adjust frequency as needed
-
-        self.K = None  # We'll set this from the first message
+        self.create_timer(0.01, self.process_queue)
+        self.K = None
 
     def callback(self, msg):
         if self.msg_queue.full():
-            # If queue is full, remove the oldest message
             self.msg_queue.get()
         self.msg_queue.put(msg)
 
