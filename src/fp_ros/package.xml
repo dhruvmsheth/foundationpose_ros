@@ -1,0 +1,29 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>fp_ros</name>
+  <version>0.0.1</version>
+  <description>Pub/Sub package for foundationpose to ROS</description>
+  <maintainer email="dsheth@caltech.edu">dhruvstra</maintainer>
+  <license>Apache-2.0</license>
+  <maintainer email="dsheth@caltech.edu">Dhruv Sheth</maintainer>
+
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>sensor_msgs</exec_depend>
+  <exec_depend>cv_bridge</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
+  <exec_depend>ros2launch</exec_depend>
+
+  <!-- custom msg type used. -->
+  <exec_depend>fp_msg</exec_depend>
+
+
+  <test_depend>ament_copyright</test_depend>
+  <test_depend>ament_flake8</test_depend>
+  <test_depend>ament_pep257</test_depend>
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>
