@@ -27,7 +27,7 @@ if __name__=='__main__':
     debug = args.debug
     debug_dir = args.debug_dir
     output_dir = args.output_dir
-    os.system(f'rm -rf {debug_dir}/* && mkdir -p {debug_dir}/track_vis {debug_dir}/ob_in_cam')
+    os.system(f'mkdir -p {debug_dir}/track_vis {debug_dir}/ob_in_cam')
     os.makedirs(output_dir, exist_ok=True)
     to_origin, extents = trimesh.bounds.oriented_bounds(mesh)
     bbox = np.stack([-extents/2, extents/2], axis=0).reshape(2,3)

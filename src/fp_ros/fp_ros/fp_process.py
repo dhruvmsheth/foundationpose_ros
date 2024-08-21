@@ -59,7 +59,7 @@ class PoseEstimator(Node):
         set_logging_format()
         set_seed(0)
         self.mesh = trimesh.load(self.mesh_file)
-        os.system(f'rm -rf {self.debug_dir}/* && mkdir -p {self.debug_dir}/track_vis {self.debug_dir}/ob_in_cam')
+        os.system(f'mkdir -p {self.debug_dir}/track_vis {self.debug_dir}/ob_in_cam')
         os.makedirs(self.output_dir, exist_ok=True)
         self.to_origin, extents = trimesh.bounds.oriented_bounds(self.mesh)
         self.bbox = np.stack([-extents/2, extents/2], axis=0).reshape(2,3)
