@@ -18,3 +18,12 @@ ros2 run fp_ros data_sub \
 -p debug_dir:=src/fp_ros/fp_ros/data/demo_data/unity_sim_data/debug \
 -p output_dir:=src/fp_ros/fp_ros/data/demo_data/unity_sim_data/output
 ```
+
+To run with the cylinder model:
+```bash
+ros2 run fp_ros data_sub \
+--ros-args \
+-p mesh_file:=src/fp_ros/fp_ros/models/circular_model/model.obj \
+-p debug_dir:=src/fp_ros/fp_ros/data/debug \
+-p output_dir:=src/fp_ros/fp_ros/data/output
+```
