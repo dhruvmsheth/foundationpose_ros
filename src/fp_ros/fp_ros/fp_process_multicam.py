@@ -75,7 +75,8 @@ class MultiCameraPoseEstimator(Node):
         self.depth_buffers = [deque(maxlen=self.buffer_size) for _ in range(3)]
         self.mask_buffers = [deque(maxlen=self.buffer_size) for _ in range(3)]
         self.K_buffers = [deque(maxlen=self.buffer_size) for _ in range(3)]
-        self.ob_in_cam_buffers = [deque(maxlen=self.buffer_size) for _ in range(3)]
+        #self.ob_in_cam_buffers = [deque(maxlen=self.buffer_size) for _ in range(3)]
+        self.headers = [deque(maxlen=self.buffer_size) for _ in range(3)]
 
     def create_subscribers(self):
         self.subscription1 = self.create_subscription(
@@ -140,13 +141,15 @@ class MultiCameraPoseEstimator(Node):
         depth = self.cv_bridge.imgmsg_to_cv2(msg.depth, desired_encoding="passthrough")
         mask = self.cv_bridge.imgmsg_to_cv2(msg.seg, desired_encoding="mono8").astype(bool)
         K = np.array(msg.camera_matrix).reshape(3, 3)
-        ob_in_cam = np.array(msg.ob_in_cam).reshape(4, 4)
+        header = msg.rgb.header
+        #ob_in_cam = np.array(msg.ob_in_cam).reshape(4, 4)
 
         self.color_buffers[camera_index].append(color)
         self.depth_buffers[camera_index].append(depth)
         self.mask_buffers[camera_index].append(mask)
         self.K_buffers[camera_index].append(K)
-        self.ob_in_cam_buffers[camera_index].append(ob_in_cam)
+        self.headers[camera_index].append(header)
+        #self.ob_in_cam_buffers[camera_index].append(ob_in_cam)
 
     def get_latest_camera_data(self):
         return {
@@ -155,21 +158,24 @@ class MultiCameraPoseEstimator(Node):
                 'depth': self.depth_buffers[0][-1],
                 'mask': self.mask_buffers[0][-1],
                 'K': self.K_buffers[0][-1],
-                'ob_in_cam': self.ob_in_cam_buffers[0][-1]
+                'header': self.headers[0][-1]
+                #'ob_in_cam': self.ob_in_cam_buffers[0][-1]
             },
             'second': {
                 'color': self.color_buffers[1][-1],
                 'depth': self.depth_buffers[1][-1],
                 'mask': self.mask_buffers[1][-1],
                 'K': self.K_buffers[1][-1],
-                'ob_in_cam': self.ob_in_cam_buffers[1][-1]
+                'header': self.headers[1][-1]
+                #'ob_in_cam': self.ob_in_cam_buffers[1][-1]
             },
             'third': {
                 'color': self.color_buffers[2][-1],
                 'depth': self.depth_buffers[2][-1],
                 'mask': self.mask_buffers[2][-1],
                 'K': self.K_buffers[2][-1],
-                'ob_in_cam': self.ob_in_cam_buffers[2][-1]
+                'header': self.headers[2][-1]
+                #'ob_in_cam': self.ob_in_cam_buffers[2][-1]
             }
         }
 
@@ -379,9 +385,12 @@ class MultiCameraPoseEstimator(Node):
         [os.makedirs(f'{self.debug_dir}/ob_in_cam/{cam_name}', exist_ok=True) for cam_name in ['main', 'second', 'third']]
 
         if self.active_camera == 'main':
-            self.broadcast_payload_pose(common_header, self.pose_main)
+            common_header = camera_data[self.active_camera]['header']
+
+            self.broadcast_payload_pose(, self.pose_main)
             np.savetxt(f'{self.debug_dir}/ob_in_cam/{self.active_camera}/{self.frame_count}.txt', self.pose_main.reshape(4,4))
         else:
+            self.broadcast_payload_pose(camera_data[self.active_camera]['header'], self.pose_active)
             np.savetxt(f'{self.debug_dir}/ob_in_cam/{self.active_camera}/{self.frame_count}.txt', self.pose_active.reshape(4,4))
 
         if self.debug >= 1:
