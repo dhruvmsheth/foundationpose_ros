@@ -29,6 +29,8 @@ setup(
         'console_scripts': [
             'data_pub = fp_ros.publish_data:main',
             'data_sub = fp_ros.fp_process:main',    
+            'data_sub_multicam = fp_ros.fp_process_multicam:main',    
+
         ],
     },
 )
