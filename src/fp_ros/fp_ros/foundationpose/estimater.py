@@ -170,9 +170,11 @@ class FoundationPose:
         # self.glctx = dr.RasterizeGLContext()
       else:
         self.glctx = glctx
-
+    print("depth_before_eroder", depth.shape, np.min(depth), np.max(depth))
     depth = erode_depth(depth, radius=2, device='cuda')
+    print("depth_after_eroder", depth.shape, np.min(depth), np.max(depth))
     depth = bilateral_filter_depth(depth, radius=2, device='cuda')
+    print("depth_after_bilateral", depth.shape, np.min(depth), np.max(depth))
 
     if self.debug>=2:
       xyz_map = depth2xyzmap(depth, K)
@@ -182,6 +184,8 @@ class FoundationPose:
       cv2.imwrite(f'{self.debug_dir}/ob_mask.png', (ob_mask*255.0).clip(0,255))
 
     normal_map = None
+    print(f"ob_mask: {ob_mask.shape}", np.unique(ob_mask))
+    print(f"depth: {depth.shape}", np.min(depth), np.max(depth))
     valid = (depth>=0.1) & (ob_mask>0)
     if valid.sum()<4:
       logging.info(f'valid too small, return')

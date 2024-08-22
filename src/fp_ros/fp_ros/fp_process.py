@@ -2,7 +2,8 @@ import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile
 from cv_bridge import CvBridge
-from fp_msg.msg import SyncedPairs
+# from fp_msg.msg import SyncedPairs
+from msgs_srvs.msg import RGBDSeg
 from queue import Queue
 import numpy as np
 import cv2
@@ -41,8 +42,9 @@ class PoseEstimator(Node):
         self.msg_queue = Queue(maxsize=100)
 
         self.subscription = self.create_subscription(
-            SyncedPairs,
-            'cam1/synced_pairs',
+            RGBDSeg,
+            # 'cam1/synced_pairs',
+            'camera1/camera1/rgbdseg',
             self.callback,
             QoSProfile(depth=10))
 
@@ -81,26 +83,22 @@ class PoseEstimator(Node):
 
         color = self.cv_bridge.imgmsg_to_cv2(msg.rgb, desired_encoding="bgr8")
         depth = self.cv_bridge.imgmsg_to_cv2(msg.depth, desired_encoding="passthrough")
-        mask = self.cv_bridge.imgmsg_to_cv2(msg.segmentation, desired_encoding="mono8").astype(bool)
+        mask = self.cv_bridge.imgmsg_to_cv2(msg.seg, desired_encoding="mono8").astype(bool)
         self.K = np.array(msg.camera_matrix).reshape(3, 3)
 
         print(f"Color dtype: {color.dtype}, shape: {color.shape}")
         print(f"Depth dtype: {depth.dtype}, shape: {depth.shape}")
         print(f"Mask dtype: {mask.dtype}, shape: {mask.shape}")
+        print(depth.min(), depth.max())
 
         # Convert depth to float32
         # depth = depth.astype(np.float32)        
 
         if self.frame_count == 1:
+            print("starting register")
             pose = self.est.register(K=self.K, rgb=color, depth=depth, ob_mask=mask, iteration=self.est_refine_iter)
-            if self.debug >= 3:
-                m = self.mesh.copy()
-                m.apply_transform(pose)
-                m.export(f'{self.debug_dir}/model_tf.obj')
-                xyz_map = depth2xyzmap(depth, self.K)
-                valid = depth >= 0.1
-                pcd = toOpen3dCloud(xyz_map[valid], color[valid])
-                o3d.io.write_point_cloud(f'{self.debug_dir}/scene_complete.ply', pcd)
+            print(pose)
+            print("done with register")
         else:
             pose = self.est.track_one(rgb=color, depth=depth, mask=mask, K=self.K, iteration=self.track_refine_iter)
 
@@ -112,6 +110,11 @@ class PoseEstimator(Node):
             vis = draw_posed_3d_box(self.K, img=color, ob_in_cam=center_pose, bbox=self.bbox)
             vis = draw_xyz_axis(color, ob_in_cam=center_pose, scale=0.1, K=self.K, thickness=3, transparency=0, is_input_rgb=True)
             cv2.imwrite(os.path.join(self.output_dir, f'frame_{self.frame_count:04d}.png'), vis[...,::-1])
+            # try:
+            #     cv2.imshow('vis', vis[...,::-1])
+            #     cv2.waitKey(1)
+            # except Exception as e:
+            #     print(e)
 
         if self.debug >= 2:
             os.makedirs(f'{self.debug_dir}/track_vis', exist_ok=True)

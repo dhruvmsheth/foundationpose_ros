@@ -49,7 +49,7 @@ def run_neural_object_field(cfg, K, rgbs, depths, masks, cam_in_obs, debug=0, sa
 
 def run_one_ob(base_dir, cfg, use_refined_mask=False):
   save_dir = f'{base_dir}/nerf'
-  os.system(f'mkdir -p {save_dir}')
+  # os.system(f' mkdir -p {save_dir}')
   # with open(f'{base_dir}/select_frames.yml','r') as ff:
   #   info = yaml.safe_load(ff)
   rgbs = []

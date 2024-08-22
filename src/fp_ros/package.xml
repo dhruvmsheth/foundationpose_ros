@@ -15,7 +15,7 @@
   <exec_depend>ros2launch</exec_depend>
 
   <!-- custom msg type used. -->
-  <exec_depend>fp_msg</exec_depend>
+  <exec_depend>msgs_srvs</exec_depend>
 
 
   <test_depend>ament_copyright</test_depend>
