@@ -2,7 +2,8 @@ import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile
 from cv_bridge import CvBridge
-from fp_msg.msg import SyncedPairs
+# from fp_msg.msg import SyncedPairs
+from msgs_srvs.msg import RGBDSeg
 
 from tf2_ros import TransformException
 from tf2_ros.buffer import Buffer
@@ -16,6 +17,7 @@ import numpy as np
 import cv2
 import sys
 import os
+import pyquaternion as pyqt
 
 # print(f"Python path: {sys.path}")
 # print(f"Current working directory: {os.getcwd()}")
@@ -45,6 +47,10 @@ class MultiCameraPoseEstimator(Node):
         self.camera_priority = self.create_camera_priority_queue()
         self.payload_pose_broadcaster = TransformBroadcaster(self)
         self.frame_count = 0
+
+        self.tf_buffer = Buffer()
+        self.tf_listener = TransformListener(self.tf_buffer, self)
+
 
 
 
@@ -80,11 +86,11 @@ class MultiCameraPoseEstimator(Node):
 
     def create_subscribers(self):
         self.subscription1 = self.create_subscription(
-            SyncedPairs, 'cam1/synced_pairs', self.callback1, QoSProfile(depth=10))
+            RGBDSeg, 'camera1/camera1/rgbdseg', self.callback1, QoSProfile(depth=10))
         self.subscription2 = self.create_subscription(
-            SyncedPairs, 'cam2/synced_pairs', self.callback2, QoSProfile(depth=10))
+            RGBDSeg, 'camera2/camera2/rgbdseg', self.callback2, QoSProfile(depth=10))
         self.subscription3 = self.create_subscription(
-            SyncedPairs, 'cam3/synced_pairs', self.callback3, QoSProfile(depth=10))
+            RGBDSeg, 'camera3/camera3/rgbdseg', self.callback3, QoSProfile(depth=10))
 
 
     ##################################
@@ -196,7 +202,7 @@ class MultiCameraPoseEstimator(Node):
         mask2 = ensure_binary_mask(mask2)
         intersection = np.logical_and(mask1, mask2)
         union = np.logical_or(mask1, mask2)
-        iou = np.sum(intersection) / np.sum(union)
+        iou = np.sum(intersection) / (np.sum(union) + 1e-6)
         return iou
 
     def calculate_mtc(self, masks: deque, window_size: int = 3) -> float:
@@ -257,6 +263,7 @@ class MultiCameraPoseEstimator(Node):
         self.switch_count += 1
 
         camera_data = self.get_latest_camera_data()
+        self.masks.append(camera_data['main']['mask'])
 
         if self.frame_count == 1 and self.active_camera == 'main':
             self.pose_main = self.est.register(
@@ -277,17 +284,34 @@ class MultiCameraPoseEstimator(Node):
                 print(f"Switching from {self.active_camera} to higher priority {next_camera} camera")
                 self.switch_count = 0
                 if self.active_camera == 'main':
-                    self.pose_active = pose_transform_to_cam(camera_data['main']['cam_transform'], 
-                                                        camera_data[next_camera]['cam_transform'], 
+
+                    self.pose_active = self.pose_transform_to_cam(camera_data['main']['header'].frame_id, 
+                                                        camera_data[next_camera]['header'].frame_id, 
                                                         self.pose_main)
+
+                    # self.pose_active = pose_transform_to_cam(camera_data['main']['cam_transform'], 
+                    #                                     camera_data[next_camera]['cam_transform'], 
+                    #                                     self.pose_main)
+                    
+
                 elif next_camera == 'main':
-                    self.pose_main = pose_transform_to_cam(camera_data[self.active_camera]['cam_transform'], 
-                                                    camera_data['main']['cam_transform'], 
-                                                    self.pose_active)
-                else:
-                    self.pose_active = pose_transform_to_cam(camera_data[self.active_camera]['cam_transform'], 
-                                                        camera_data[next_camera]['cam_transform'], 
+
+                    self.pose_main = self.pose_transform_to_cam(camera_data[self.active_camera]['header'].frame_id,
+                                                        camera_data['main']['header'].frame_id, 
                                                         self.pose_active)
+
+                    # self.pose_main = pose_transform_to_cam(camera_data[self.active_camera]['cam_transform'], 
+                    #                                 camera_data['main']['cam_transform'], 
+                    #                                 self.pose_active)
+                else:
+
+                    self.pose_active = self.pose_transform_to_cam(camera_data[self.active_camera]['header'].frame_id,
+                                                        camera_data[next_camera]['header'].frame_id, 
+                                                        self.pose_active)
+                    
+                    # self.pose_active = pose_transform_to_cam(camera_data[self.active_camera]['cam_transform'], 
+                    #                                     camera_data[next_camera]['cam_transform'], 
+                    #                                     self.pose_active)
                 self.active_camera = next_camera
                 self.est.pose_last = torch.from_numpy((self.pose_main if self.active_camera == 'main' else self.pose_active).reshape(1, 4, 4))
                 self.masks.clear()       
@@ -307,9 +331,10 @@ class MultiCameraPoseEstimator(Node):
         pose = pose.reshape(4, 4)
 
         translation = pose[:3, 3]
-        tf.transform.translation.x = translation[0]
-        tf.transform.translation.y = translation[1]
-        tf.transform.translation.z = translation[2]
+        print(f"Translation: {translation}")
+        tf.transform.translation.x = float(translation[0])
+        tf.transform.translation.y = float(translation[1])
+        tf.transform.translation.z = float(translation[2])
 
         quaternion = quaternion_from_matrix(pose)
         
@@ -320,14 +345,39 @@ class MultiCameraPoseEstimator(Node):
 
         self.payload_pose_broadcaster.sendTransform(tf)
 
+    def pose_transform_to_cam(self, source_frame, target_frame, pose):
+        try:
+            t = self.tf_buffer.lookup_transform(target_frame, source_frame, rclpy.time.Time())
+        except TransformException as e:
+            print(f"Error: {e}")
+            return None
+        
+        quat = pyqt.Quaternion(w=t.transform.rotation.w, 
+                                   x=t.transform.rotation.x, 
+                                   y=t.transform.rotation.y, 
+                                   z=t.transform.rotation.z)
+        rot = quat.rotation_matrix
+
+        transf = np.eye(4)
+        transf[:3, :3] = rot
+        transf[:3, 3] = np.array([t.transform.translation.x, 
+                                    t.transform.translation.y, 
+                                    t.transform.translation.z])
+        
+        return transf @ pose
+        
+
+
+        
+
+
 
     ##################################
     # Main loop for tracking processing
     ####################################
 
     def process_frame(self, camera_data):
-        self.frame_count += 1
-        self.switch_count += 1
+        print("ACTIVE CAMERA IS: ", self.active_camera)
         if len(self.masks) == self.window_size:
             mtc_score = self.calculate_mtc(self.masks, self.window_size)
             print(f"Current mtc_score for {self.active_camera} is {mtc_score}")
@@ -346,19 +396,36 @@ class MultiCameraPoseEstimator(Node):
                         # set the previous frame to the projection of transformation matrix
                         # for fp initialization for tracking (modify previous frames' frame of ref)
                         if self.active_camera == 'main':
-                            self.pose_active = pose_transform_to_cam(camera_data['main']['cam_transform'], 
-                                                                camera_data[next_camera]['cam_transform'], 
+
+                            self.pose_active = self.pose_transform_to_cam(camera_data['main']['header'].frame_id, 
+                                                                camera_data[next_camera]['header'].frame_id, 
                                                                 self.pose_main)
+
+                            # self.pose_active = pose_transform_to_cam(camera_data['main']['cam_transform'], 
+                            #                                     camera_data[next_camera]['cam_transform'], 
+                            #                                     self.pose_main)
+                            
+
                         elif next_camera == 'main':
-                            self.pose_main = pose_transform_to_cam(camera_data[active_camera]['cam_transform'], 
-                                                            camera_data['main']['cam_transform'], 
-                                                            self.pose_active)
-                        else:
-                            self.pose_active = pose_transform_to_cam(camera_data[active_camera]['cam_transform'], 
-                                                                camera_data[next_camera]['cam_transform'], 
+
+                            self.pose_main = self.pose_transform_to_cam(camera_data[self.active_camera]['header'].frame_id,
+                                                                camera_data['main']['header'].frame_id, 
                                                                 self.pose_active)
-                        active_camera = next_camera
-                        self.est.pose_last = torch.from_numpy((self.pose_main if active_camera == 'main' else self.pose_active).reshape(1, 4, 4))
+
+                            # self.pose_main = pose_transform_to_cam(camera_data[self.active_camera]['cam_transform'], 
+                            #                                 camera_data['main']['cam_transform'], 
+                            #                                 self.pose_active)
+                        else:
+
+                            self.pose_active = self.pose_transform_to_cam(camera_data[self.active_camera]['header'].frame_id,
+                                                                camera_data[next_camera]['header'].frame_id, 
+                                                                self.pose_active)
+                            
+                            # self.pose_active = pose_transform_to_cam(camera_data[self.active_camera]['cam_transform'], 
+                            #                                     camera_data[next_camera]['cam_transform'], 
+                            #                                     self.pose_active)
+                        self.active_camera = next_camera
+                        self.est.pose_last = torch.from_numpy((self.pose_main if self.active_camera == 'main' else self.pose_active).reshape(1, 4, 4))
                         self.masks.clear()
                         self.consecutive_occlusions = 0
                     else:
@@ -386,15 +453,25 @@ class MultiCameraPoseEstimator(Node):
 
         if self.active_camera == 'main':
             common_header = camera_data[self.active_camera]['header']
+            # common_header.frame_id = 'camera1_color_optical_frame'
 
-            self.broadcast_payload_pose(, self.pose_main)
+            self.broadcast_payload_pose(common_header, self.pose_main)
             np.savetxt(f'{self.debug_dir}/ob_in_cam/{self.active_camera}/{self.frame_count}.txt', self.pose_main.reshape(4,4))
         else:
-            self.broadcast_payload_pose(camera_data[self.active_camera]['header'], self.pose_active)
+            # if self.active_camera == 'second':
+            #     common_header = camera_data[self.active_camera]['header']
+            #     # common_header.frame_id = 'camera2_color_optical_frame'
+            # else:
+            #     common_header = camera_data[self.active_camera]['header']
+            #     common_header.frame_id = 'camera3_color_optical_frame'
+            common_header = camera_data[self.active_camera]['header']
+            
+            self.broadcast_payload_pose(common_header, self.pose_active)
             np.savetxt(f'{self.debug_dir}/ob_in_cam/{self.active_camera}/{self.frame_count}.txt', self.pose_active.reshape(4,4))
 
         if self.debug >= 1:
             [os.makedirs(os.path.join(self.output_dir, cam_name), exist_ok=True) for cam_name in ['main', 'second', 'third']]
+            [os.makedirs(os.path.join(self.output_dir, cam_name), exist_ok=True) for cam_name in ['main/seg', 'second/seg', 'third/seg']]
 
             color = camera_data[self.active_camera]['color']
             pose = self.pose_main if self.active_camera == 'main' else self.pose_active
@@ -404,6 +481,7 @@ class MultiCameraPoseEstimator(Node):
             vis = draw_posed_3d_box(K, img=color, ob_in_cam=center_pose, bbox=self.bbox)
             vis = draw_xyz_axis(color, ob_in_cam=center_pose, scale=0.1, K=K, thickness=3, transparency=0, is_input_rgb=True)            
             cv2.imwrite(os.path.join(self.output_dir, self.active_camera, f'frame_{self.frame_count:04d}.png'), vis[...,::-1])
+            cv2.imwrite(os.path.join(self.output_dir, self.active_camera, 'seg', f'frame_{self.frame_count:04d}.png'), camera_data[self.active_camera]['mask'].astype(np.uint8)*255)
 
             print(f"Frame {self.frame_count} saved in {self.active_camera} camera directory")
 
